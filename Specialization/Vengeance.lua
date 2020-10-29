@@ -18,7 +18,7 @@ local VG = {
 	Shear              = 203782,
 	ThrowGlaive        = 204157,
 	SoulFragments      = 203981,
-	ImmolationAura     = 178740,
+	ImmolationAura     = 258920,
 	SigilOfFlame       = 204596,
 	SigilOfFlame2      = 204513,
 	FieryBrand         = 204021,
@@ -30,127 +30,96 @@ local VG = {
 
 setmetatable(VG, DemonHunter.spellMeta);
 
-
 function DemonHunter:Vengeance()
 	local fd = MaxDps.FrameData;
-	local cooldown, buff, debuff, timeShift, talents, azerite =
-	fd.cooldown, fd.buff, fd.debuff, fd.timeShift, fd.talents, fd.azerite;
-	local currentSpell = fd.currentSpell;
-	local pain = UnitPower('player', Enum.PowerType.Pain);
+	local cooldown, buff, debuff, timeShift, talents =
+	fd.cooldown, fd.buff, fd.debuff, fd.timeShift, fd.talents;
+	local targets = MaxDps:SmartAoe();
+	local fury = UnitPower('player', Enum.PowerType.Fury);
+	local healthPercent = UnitHealth('player') / UnitHealthMax('player');
 	local soulFragments = buff[VG.SoulFragments].count;
 	local SigilOfFlame = talents[VG.ConcentratedSigils] and VG.SigilOfFlame2 or VG.SigilOfFlame;
 
 	MaxDps:GlowEssences();
-	MaxDps:GlowCooldown(VG.Metamorphosis, cooldown[VG.Metamorphosis].ready);
-	MaxDps:GlowCooldown(VG.DemonSpikes, cooldown[VG.DemonSpikes].ready and not buff[VG.DemonSpikesAura].up);
-	MaxDps:GlowCooldown(VG.FieryBrand, cooldown[VG.FieryBrand].ready);
-	MaxDps:GlowCooldown(VG.InfernalStrike, cooldown[VG.InfernalStrike].ready);
+
+	-- DemonSpikes if ((Charges=2 and HealthPercent<0.5 and not DemonSpikesAura) or BuffRemainingSec(DemonSpikes) < 1.5) and not Metamorphosis and not FieryBrandDebuff 
+
+	MaxDps:GlowCooldown(VG.DemonSpikes, ((cooldown[VG.DemonSpikes].charges >= 2 and healthPercent < 0.5 and not buff[VG.DemonSpikesAura].up) or buff[VG.DemonSpikesAura].remains < 1.5) and cooldown[VG.DemonSpikes].ready and not buff[VG.Metamorphosis].up and not (cooldown[VG.FieryBrand].remains > 52));
+
+	-- FieryBrand if not Metamorphosis and not DemonSpikesAura
+
+	MaxDps:GlowCooldown(VG.FieryBrand, cooldown[VG.FieryBrand].ready and not buff[VG.Metamorphosis].up and not buff[VG.DemonSpikesAura].up);
+
+	-- Metamorphosis if not Metamorphosis and not FieryBrand and not DemonSpikesAura
+
+	MaxDps:GlowCooldown(VG.Metamorphosis, cooldown[VG.Metamorphosis].ready and not buff[VG.Metamorphosis].up and not (cooldown[VG.FieryBrand].remains > 52) and not buff[VG.DemonSpikesAura].up);
 
 	if talents[VG.SoulBarrier] then
 		MaxDps:GlowCooldown(VG.SoulBarrier, cooldown[VG.SoulBarrier].ready);
 	end
 
-	if talents[VG.CharredFlesh] then
-		local result = DemonHunter:VengeanceBrand();
-		if result then return result; end
-	end
-
-	--- SIMC
-	--- This cannot be used on normal rotation, not always you want to move
-	-- infernal_strike;
-	--if cooldown[VG.InfernalStrike].ready then
-	--	return VG.InfernalStrike;
-	--end
-
-	-- spirit_bomb,if=soul_fragments>=4;
-	if talents[VG.SpiritBomb] and pain >= 30 and soulFragments >= 4 then
-		return VG.SpiritBomb;
-	end
-
-	-- soul_cleave,if=!talent.spirit_bomb.enabled;
-	if not talents[VG.SpiritBomb] and pain >= 30 then
-		return VG.SoulCleave;
-	end
-
-	-- soul_cleave,if=talent.spirit_bomb.enabled&soul_fragments=0;
-	if talents[VG.SpiritBomb] and soulFragments == 0 and pain >= 30 then
-		return VG.SoulCleave;
-	end
-
-	-- immolation_aura,if=pain<=90;
-	if pain <= 90 and cooldown[VG.ImmolationAura].ready then
-		return VG.ImmolationAura;
-	end
-	
-	-- fel_devastation;
-	if talents[VG.FelDevastation] and cooldown[VG.FelDevastation].ready and currentSpell ~= VG.FelDevastation then
+	-- Spell FelDevastation Cooldown if TargetsInRadius(FelDevastationDamage) >= 2 or HealthPercent < 0.75
+	if cooldown[VG.FelDevastation].ready and fury > 70 and (targets >= 2 or healthPercent < 0.75) then
 		return VG.FelDevastation;
 	end
-
-	-- sigil_of_flame;
+	
+	-- Spell SigilOfFlame
 	if cooldown[SigilOfFlame].ready then
 		return SigilOfFlame;
 	end
 
-	-- felblade,if=pain<=70;
-	if talents[VG.Felblade] and cooldown[VG.Felblade].ready and pain <= 70 then
-		return VG.Felblade;
+	if talents[VG.SpiritBomb] and fury > 30 then
+		-- Spell SoulCleave if HealthPercent < 0.5 and TargetsInRadius(SoulCleave) < 3 and HasBuff(SoulFragment)
+		if healthPercent < 0.5 and targets < 3 and soulFragments > 0 then
+			return VG.SoulCleave;
+		end
+		-- Spell SpiritBomb if BuffStack(SoulFragment) >= 4 or (TargetsInRadius(SpiritBomb) >= 3 and HealthPercent < 0.5)
+		if soulFragments >= 4 or (targets >= 3 and healthPercent < 0.5) then
+			return VG.SpiritBomb;
+		end
+		-- Spell SoulCleave if PowerToMax < 30 and (not HasBuff(SoulFragment) or TargetsInRadius(SpiritBomb) < 2)
+		if fury > 70 and (soulFragments == 0 or targets < 2) then
+			return VG.SoulCleave;
+		end
+	else
+		--Spell SoulCleave if HealthPercent < 0.5 and fury > 30
+		if healthPercent < 0.5 and fury > 30 then
+			return VG.SoulCleave;
+		end
 	end
 
-	-- fracture,if=soul_fragments<=3;
-	if talents[VG.Fracture] and soulFragments <= 3 and cooldown[VG.Fracture].ready then
+	-- Spell Fracture if ChargesRemaining(Fracture) = 2
+	if talents[VG.Fracture] and cooldown[VG.Fracture].charges >= 2 then
 		return VG.Fracture;
 	end
 
-	-- shear;
-	if talents[VG.Fracture] then
-		if cooldown[VG.Fracture].ready then
-			return VG.Fracture;
-		end
-	else
-		return VG.Shear;
-	end
-
-	-- throw_glaive;
-	return VG.ThrowGlaive;
-end
-
-function DemonHunter:VengeanceBrand()
-	local fd = MaxDps.FrameData;
-	local cooldown = fd.cooldown;
-	local debuff = fd.debuff;
-	local talents = fd.talents;
-	local currentSpell = fd.currentSpell;
-	local SigilOfFlame = talents[VG.ConcentratedSigils] and VG.SigilOfFlame2 or VG.SigilOfFlame;
-
-	-- sigil_of_flame,if=cooldown.fiery_brand.remains<2;
-	if cooldown[VG.FieryBrand].remains < 2 and cooldown[SigilOfFlame].ready then
-		return SigilOfFlame;
-	end
-
-	---- infernal_stike,if=cooldown.fiery_brand.remains=0;
-	--if cooldown[VG.FieryBrand].remains <= 0 and cooldown[VG.InfernalStrike].ready then
-	--	return VG.InfernalStrike;
-	--end
-
-	-- fiery_brand;
-	if cooldown[VG.FieryBrand].ready then
-		return VG.FieryBrand;
-	end
-
-	-- immolation_aura,if=dot.fiery_brand.ticking;
-	if debuff[VG.FieryBrand].up and cooldown[VG.ImmolationAura].ready then
+	-- Spell ImmolationAura
+	if cooldown[VG.ImmolationAura].ready then
 		return VG.ImmolationAura;
 	end
 
-	-- fel_devastation,if=dot.fiery_brand.ticking;
-	if talents[VG.FelDevastation] and cooldown[VG.FelDevastation].ready and debuff[VG.FieryBrand].up and
-		currentSpell ~= VG.FelDevastation then
-		return VG.FelDevastation;
+	-- Spell SoulCleave if PowerToMax < 30
+	if not talents[VG.SpiritBomb] and fury > 70 then
+		return VG.SoulCleave;
 	end
 
-	-- sigil_of_flame,if=dot.fiery_brand.ticking;
-	if debuff[VG.FieryBrand].up and cooldown[SigilOfFlame].ready then
-		return SigilOfFlame;
+	-- Spell Fracture
+	if talents[VG.Fracture] and cooldown[VG.Fracture].ready then
+		return VG.Fracture;
+	end
+
+	-- Spell Felblade if PowerToMax >= 40
+	if talents[VG.Felblade] and cooldown[VG.Felblade].ready and fury <= 60 then
+		return VG.Felblade;
+	end
+
+	-- Spell InfernalStrike if ChargesRemaining(InfernalStrike) = 2
+	if cooldown[VG.InfernalStrike].ready and cooldown[VG.InfernalStrike].charges >= 2 then
+		return VG.InfernalStrike;
+	end
+
+	-- Spell Shear
+	if not talents[VG.Fracture] then
+		return VG.Shear;
 	end
 end
